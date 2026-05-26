@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "atlassian-mcp": {
+      "command": "atlassian-mcp",
+      "args": [],
+      "env": {}
+    }
+  }
+}
