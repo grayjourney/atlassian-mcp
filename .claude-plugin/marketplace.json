@@ -1,0 +1,21 @@
+{
+  "name": "grayjourney",
+  "owner": {
+    "name": "grayjourney",
+    "url": "https://github.com/grayjourney"
+  },
+  "metadata": {
+    "description": "Atlassian (Jira & Confluence) tooling for Claude Code."
+  },
+  "plugins": [
+    {
+      "name": "atlassian-mcp",
+      "source": "./plugin",
+      "description": "Jira & Confluence tools for Claude Code, served by a local Go MCP server (Atlassian Cloud, API-token auth).",
+      "version": "0.1.0",
+      "author": { "name": "grayjourney" },
+      "homepage": "https://github.com/grayjourney/atlassian-mcp",
+      "keywords": ["jira", "confluence", "atlassian", "mcp"]
+    }
+  ]
+}

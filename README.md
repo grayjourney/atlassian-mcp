@@ -78,6 +78,178 @@ If you'd rather not use the dashboard, set these in the MCP server's `env` block
 }
 ```
 
+## Using with Claude Code
+
+## 1. Install the binary
+
+The MCP server is a single Go binary. Install it onto your `PATH`:
+
+```bash
+# From a published module:
+go install github.com/grayjourney/atlassian-mcp/cmd/atlassian-mcp@latest
+
+# …or from this local checkout:
+cd /Users/tran.quang.huyf/Works/go/src/github/atlassian-mcp
+go install ./cmd/atlassian-mcp
+```
+
+This drops `atlassian-mcp` in `$(go env GOPATH)/bin` (here:
+`~/go/bin/atlassian-mcp`). Confirm it's reachable:
+
+```bash
+command -v atlassian-mcp   # -> ~/go/bin/atlassian-mcp
+atlassian-mcp --version    # -> 0.1.0
+```
+
+If `command -v` finds nothing, add `~/go/bin` to your `PATH` in `~/.zshrc`.
+
+## 2. Provide credentials
+
+You need an Atlassian API token (the same token works for Jira and Confluence):
+create one at <https://id.atlassian.com/manage-profile/security/api-tokens>.
+
+There are three ways to feed credentials to the server — pick **one**.
+
+### Option A — the setup dashboard (recommended, no file editing)
+
+The server hosts a loopback-only web form. Start it once, fill in the form, save:
+
+```bash
+atlassian-mcp --dashboard-port 24285 &   # or just start Claude Code (see §3)
+open http://127.0.0.1:24285
+```
+
+Fill in **Jira URL** (`https://grayjourney.atlassian.net`), **email**, and
+**token**, then Save. It writes `~/.atlassian-mcp/config.json` at `0600` and is
+picked up immediately — no restart. Confluence URL is usually your Jira URL +
+`/wiki`; leave it blank if you only want Jira.
+
+### Option B — the config file directly
+
+Write `~/.atlassian-mcp/config.json` yourself (this is what the dashboard
+produces). Keep it owner-only since it holds a token:
+
+```bash
+mkdir -p ~/.atlassian-mcp && chmod 700 ~/.atlassian-mcp
+umask 077
+cat > ~/.atlassian-mcp/config.json <<'JSON'
+{
+  "jira_url": "https://grayjourney.atlassian.net",
+  "jira_username": "gray.tran201@gmail.com",
+  "jira_api_token": "YOUR_API_TOKEN",
+  "confluence_url": "",
+  "confluence_username": "",
+  "confluence_api_token": ""
+}
+JSON
+chmod 600 ~/.atlassian-mcp/config.json
+atlassian-mcp --check-config   # -> "configured", exit 0
+```
+
+### Option C — environment variables in the MCP registration
+
+If you'd rather not have a config file, put the credentials in the server's
+`env` block (these override the config file). See §3.
+
+## 3. Register the server with Claude Code
+
+Three ways, in order of simplicity.
+
+### 3a. `claude mcp add` (user scope — what's set up here)
+
+Makes the tools available in **every** project on this machine:
+
+```bash
+claude mcp add --scope user atlassian-mcp atlassian-mcp
+claude mcp list
+# atlassian-mcp: atlassian-mcp  - ✓ Connected
+```
+
+This relies on the credentials from §2 (config file or dashboard). To inline the
+credentials instead (Option C), pass them as env:
+
+```bash
+claude mcp add --scope user atlassian-mcp \
+  --env JIRA_URL=https://grayjourney.atlassian.net \
+  --env JIRA_USERNAME=gray.tran201@gmail.com \
+  --env JIRA_API_TOKEN=YOUR_API_TOKEN \
+  -- atlassian-mcp
+```
+
+To remove it later: `claude mcp remove --scope user atlassian-mcp`.
+
+### 3b. Project-scoped `.mcp.json`
+
+To share the server with a single repo's collaborators, drop a `.mcp.json` at the
+project root:
+
+```json
+{
+  "mcpServers": {
+    "atlassian-mcp": { "command": "atlassian-mcp", "args": [], "env": {} }
+  }
+}
+```
+
+Claude Code will ask you to approve the project MCP server the first time.
+
+### 3c. As a Claude Code plugin (the `plugin/` directory)
+
+The repo ships a ready-made plugin in `plugin/` that registers the server **and**
+adds a `SessionStart` hook: the first time you start Claude Code without
+credentials, it opens the dashboard in your browser automatically. Install it by
+pointing Claude Code at a marketplace that serves this `plugin/` directory. The
+plugin's `.mcp.json` calls `atlassian-mcp` from your `PATH`, so step 1 is still a
+prerequisite.
+
+> The user-scope registration (3a) and the plugin (3c) do the same job. Use one,
+> not both, to avoid a duplicate server entry.
+
+## 4. Using it from Claude Code
+
+You don't call the tools by name — you ask Claude in plain language and it picks
+the right tool. Restart Claude Code (or start a new session) after registering so
+it discovers the tools. The five Jira tools and example prompts:
+
+| You say | Tool used | What happens |
+| --- | --- | --- |
+| "Search Jira for open issues in KAN" | `jira_search` | runs JQL `project = KAN AND statusCategory != Done` |
+| "Show me KAN-1" | `jira_get_issue` | returns summary, status, assignee, description |
+| "Create a Task in KAN titled 'Fix login', describe it as …" | `jira_create_issue` | creates the issue, returns its key + URL |
+| "Rename KAN-1 to … and add label backend" | `jira_update_issue` | patches summary + `labels` |
+| "Move KAN-1 to In Progress with a comment" | `jira_transition_issue` | transitions by status name + adds comment |
+
+Concrete things to try against your Kanban board (`KAN`):
+
+- *"List the most recently created issues in project KAN."*
+- *"Create a Task in KAN called 'Wire up auth' with a markdown description that
+  has a bullet list of two steps."*
+- *"What's the status and description of KAN-1?"*
+- *"Move KAN-1 to Done and leave the comment 'verified via MCP'."*
+- *"Add the label `mcp-test` to KAN-1 and change its title to 'Auth (done)'."*
+
+Notes that match how the tools behave:
+
+- **Descriptions/comments accept Markdown** on input (converted to Jira's ADF) and
+  come back as plain text on read. Markdown fidelity is intentionally basic
+  (paragraphs + bullet lists); inline bold/links render as literal text for now.
+- **Transitions** are by status *name* (`In Progress`, `Done`) or numeric id. Ask
+  for a status that doesn't exist and the tool replies with the valid options,
+  e.g. `"To Do" (id 11), "In Progress" (id 21), "Done" (id 31)`.
+- **Assignee on create** expects an Atlassian *account id*, not an email
+  (resolving by email is tracked as future work).
+- **Search** defaults to 10 results (max 50) and returns a compact projection
+  (key, summary, status, type, assignee, priority, updated).
+- Write tools are flagged non-destructive; Claude Code may ask you to confirm
+  before a create/update/transition depending on your permission settings.
+
+## 5. Verify the connection
+
+```bash
+claude mcp list
+# atlassian-mcp: atlassian-mcp  - ✓ Connected
+```
+
 ## Layout
 
 ```
