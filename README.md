@@ -11,16 +11,91 @@ no hand-editing of config files required.
 
 ## Tools
 
-| Jira | Confluence |
+**Jira** — issues & fields:
+
+| Tool | What it does |
 | --- | --- |
-| `jira_search` — search with JQL | `confluence_search` — search with CQL |
-| `jira_get_issue` — issue details | `confluence_get_page` — page content |
-| `jira_create_issue` — create issues | `confluence_create_page` — create pages |
-| `jira_update_issue` — update issues | `confluence_update_page` — update pages |
-| `jira_transition_issue` — change status | `confluence_add_comment` — add comments |
+| `jira_search` | search issues with JQL |
+| `jira_get_issue` | rich issue details (status, dates, labels, components, story points, sprints, …) |
+| `jira_create_issue` | create issues with due date, story points, assignee (by email), labels, components, fix versions, parent/epic, priority, and any custom field by name |
+| `jira_update_issue` | update any of the above on an existing issue |
+| `jira_transition_issue` | change status by name/id, optionally with a comment |
+| `jira_delete_issue` | delete an issue (and optionally its subtasks) |
+| `jira_get_changelog` | issue change history |
+| `jira_list_fields` | discover field names/ids (system + custom) |
+| `jira_get_field_options` | allowed values of a select/multi-select field |
+
+**Jira** — comments, time, people:
+
+| Tool | What it does |
+| --- | --- |
+| `jira_add_comment` / `jira_list_comments` / `jira_edit_comment` | add, read, and edit issue comments (Markdown) |
+| `jira_add_worklog` / `jira_get_worklog` | log and read time spent (e.g. "2h 30m") |
+| `jira_get_issue_dates` | all date fields (created, updated, due, resolved, custom dates) |
+| `jira_list_watchers` / `jira_add_watcher` / `jira_remove_watcher` | manage watchers (by email/name/id) |
+| `jira_get_user` | resolve users by email/name to an account id |
+
+**Jira** — attachments:
+
+| Tool | What it does |
+| --- | --- |
+| `jira_list_attachments` | list an issue's attachments (filename, size, type) |
+| `jira_read_attachment` | read a text attachment's content inline (by id or filename) |
+| `jira_download_attachment` | download any attachment to a local file, return its path |
+
+**Jira** — agile (boards & sprints):
+
+| Tool | What it does |
+| --- | --- |
+| `jira_list_boards` | list boards (Scrum/Kanban), optionally by project |
+| `jira_get_board_issues` | issues on a board (optional JQL) |
+| `jira_list_sprints` / `jira_get_active_sprint` | a Scrum board's sprints / its current sprint |
+| `jira_get_sprint_issues` | issues in a sprint (optional JQL) |
+| `jira_create_sprint` / `jira_update_sprint` | create a sprint; rename/start/close/reschedule |
+| `jira_move_issues_to_sprint` | move issues into a sprint |
+
+**Jira** — projects, versions, components, links:
+
+| Tool | What it does |
+| --- | --- |
+| `jira_list_projects` | list/search projects |
+| `jira_get_project_versions` / `jira_create_version` | list & create versions (releases / milestones) |
+| `jira_get_project_components` | list a project's components |
+| `jira_list_link_types` | available link types (Blocks, Relates, …) |
+| `jira_create_issue_link` / `jira_remove_issue_link` | link / unlink two issues |
+| `jira_link_to_epic` | put an issue under an epic (Epic Link or parent) |
+| `jira_create_remote_link` | attach a web link to an issue |
+
+**Jira** — reporting:
+
+| Tool | What it does |
+| --- | --- |
+| `jira_board_report` | board summary: counts by status/assignee/type, done vs remaining, story points |
+| `jira_sprint_report` | same, for a sprint |
+| `jira_version_report` | same, for a version / milestone (by fix version) |
+
+**Jira** — service management & development:
+
+| Tool | What it does |
+| --- | --- |
+| `jira_list_service_desks` | list JSM service desks you can access |
+| `jira_list_queues` / `jira_get_queue_issues` | a service desk's queues / a queue's issues |
+| `jira_get_development_info` | an issue's branches, commits & pull requests (from connected Bitbucket/GitHub/GitLab) |
+
+**Confluence:**
+
+| Tool | What it does |
+| --- | --- |
+| `confluence_search` | search with CQL |
+| `confluence_get_page` | page content |
+| `confluence_create_page` | create pages |
+| `confluence_update_page` | update pages |
+| `confluence_add_comment` | add comments |
 
 Page/issue bodies accept **Markdown** on input (converted to Jira ADF / Confluence
-storage XHTML) and are returned as plain text on read.
+storage XHTML) and are returned as plain text on read. Custom fields, story
+points, due dates, and assignees can be set by **human name / email** — the
+server resolves them to Jira's internal ids.
 
 ## Install
 
@@ -236,8 +311,8 @@ Notes that match how the tools behave:
 - **Transitions** are by status *name* (`In Progress`, `Done`) or numeric id. Ask
   for a status that doesn't exist and the tool replies with the valid options,
   e.g. `"To Do" (id 11), "In Progress" (id 21), "Done" (id 31)`.
-- **Assignee on create** expects an Atlassian *account id*, not an email
-  (resolving by email is tracked as future work).
+- **Assignee** can be given by email, display name, or account id — the server
+  resolves it via user search.
 - **Search** defaults to 10 results (max 50) and returns a compact projection
   (key, summary, status, type, assignee, priority, updated).
 - Write tools are flagged non-destructive; Claude Code may ask you to confirm
@@ -257,7 +332,7 @@ cmd/atlassian-mcp   entrypoint (stdio MCP + dashboard goroutine)
 internal/config     config file + env-override loading
 internal/atlassian  REST client (Jira v3, Confluence v1)
 internal/content    Markdown ↔ ADF / storage XHTML conversion
-internal/tools      the 10 MCP tools
+internal/tools      the MCP tools (42 Jira + 5 Confluence)
 internal/dashboard  loopback setup UI
 plugin/             Claude Code plugin (manifest, .mcp.json, SessionStart hook)
 docs/               implementation plan
@@ -266,15 +341,21 @@ tickets-details/    ticket write-up
 
 ## Scope & future work
 
-MVP is **Atlassian Cloud + API-token (basic auth)** only. Deliberately not yet
-implemented (PRs welcome):
+Auth is **Atlassian Cloud + API-token (basic auth)** only. The Jira tool surface
+now spans issues/fields, comments/worklog/watchers, attachments, agile
+(boards/sprints), projects/versions/components/links, reporting, and service
+management + development info.
+
+Still not implemented (PRs welcome):
 
 - Server / Data Center, Personal Access Tokens, and OAuth 2.0
 - `READ_ONLY_MODE` to block write tools
-- Attachments, worklogs, and the rest of the Python project's ~50 tools
-- Confluence Cloud v2 content API
+- **ProForma forms** — the Forms API lives on `api.atlassian.com` and requires
+  OAuth/PAT bearer auth, so it can't work under the basic-auth model; it's gated
+  behind the OAuth item above.
+- Confluence Cloud v2 content API and the broader Confluence tool set
 - Higher-fidelity Markdown (inline bold/italic/links, tables, code blocks)
-- Resolving Jira assignees by email/name (currently expects an account ID)
+- Field-map caching, and pagination for large reports/searches
 
 ## Development
 
