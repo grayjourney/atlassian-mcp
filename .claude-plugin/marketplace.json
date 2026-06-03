@@ -12,7 +12,7 @@
       "name": "atlassian-mcp",
       "source": "./plugin",
       "description": "Jira & Confluence tools for Claude Code, served by a local Go MCP server (Atlassian Cloud, API-token auth).",
-      "version": "0.2.0",
+      "version": "0.2.1",
       "author": { "name": "grayjourney" },
       "homepage": "https://github.com/grayjourney/atlassian-mcp",
       "keywords": ["jira", "confluence", "atlassian", "mcp"]
