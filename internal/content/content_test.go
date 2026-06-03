@@ -109,6 +109,39 @@ func TestADFToText(t *testing.T) {
 	}
 }
 
+func TestADFToTextRendersSmartLinksMentionsAndLinkMarks(t *testing.T) {
+	adf := map[string]any{
+		"type": "doc", "version": 1,
+		"content": []any{
+			map[string]any{"type": "paragraph", "content": []any{
+				map[string]any{"type": "text", "text": "PR to be merged - "},
+				// smart link → inlineCard, URL lives in attrs.url with no text child
+				map[string]any{"type": "inlineCard", "attrs": map[string]any{
+					"url": "https://bitbucket.org/mm/repo/pull-requests/1251/diff"}},
+				map[string]any{"type": "text", "text": " c/o "},
+				map[string]any{"type": "mention", "attrs": map[string]any{
+					"id": "abc", "text": "@Kevin Dang"}},
+			}},
+			map[string]any{"type": "paragraph", "content": []any{
+				// labelled link via a link mark on a text node
+				map[string]any{"type": "text", "text": "design doc",
+					"marks": []any{map[string]any{"type": "link",
+						"attrs": map[string]any{"href": "https://docs.google.com/document/d/abc"}}}},
+			}},
+		},
+	}
+	got := ADFToText(adf)
+	for _, want := range []string{
+		"https://bitbucket.org/mm/repo/pull-requests/1251/diff",
+		"@Kevin Dang",
+		"https://docs.google.com/document/d/abc",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("ADFToText dropped %q\n got: %q", want, got)
+		}
+	}
+}
+
 func TestADFRoundTrip(t *testing.T) {
 	adf := MarkdownToADF("# Heading\n\nBody text here")
 	got := ADFToText(adf)
