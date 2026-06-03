@@ -1,0 +1,9 @@
+# Local-only docs — kept out of the remote by project decision.
+/docs/
+
+# Project-scoped MCP config holds an Atlassian API token — never commit it.
+/.mcp.json
+
+# Editor / tooling state.
+/.idea/
+/.serena/

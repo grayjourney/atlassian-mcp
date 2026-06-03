@@ -95,9 +95,51 @@ func flattenIssue(iss atlassian.Issue, includeDescription bool) map[string]any {
 	if v, ok := f["updated"].(string); ok {
 		out["updated"] = v
 	}
+	if v, ok := f["created"].(string); ok {
+		out["created"] = v
+	}
+	if v, ok := f["duedate"].(string); ok {
+		out["due_date"] = v
+	}
+	if m, ok := f["reporter"].(map[string]any); ok {
+		out["reporter"] = m["displayName"]
+	}
+	if m, ok := f["resolution"].(map[string]any); ok {
+		out["resolution"] = m["name"]
+	}
+	if m, ok := f["parent"].(map[string]any); ok {
+		out["parent"] = m["key"]
+	}
+	if v, ok := f["labels"].([]any); ok && len(v) > 0 {
+		out["labels"] = v
+	}
+	if names := objectNames(f["components"]); len(names) > 0 {
+		out["components"] = names
+	}
+	if names := objectNames(f["fixVersions"]); len(names) > 0 {
+		out["fix_versions"] = names
+	}
 	if includeDescription {
 		if d := f["description"]; d != nil {
 			out["description"] = content.ADFToText(d)
+		}
+	}
+	return out
+}
+
+// objectNames pulls the "name" of each object in a Jira array field (components,
+// fixVersions, ...). Returns nil for absent or unexpected shapes.
+func objectNames(v any) []string {
+	arr, ok := v.([]any)
+	if !ok {
+		return nil
+	}
+	var out []string
+	for _, e := range arr {
+		if m, ok := e.(map[string]any); ok {
+			if n, ok := m["name"].(string); ok {
+				out = append(out, n)
+			}
 		}
 	}
 	return out

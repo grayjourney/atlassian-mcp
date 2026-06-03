@@ -96,3 +96,26 @@ func (c *restClient) do(ctx context.Context, method, path string, query url.Valu
 	}
 	return nil
 }
+
+// getBytes GETs an absolute URL with auth and returns the raw body and its
+// Content-Type. Used for binary downloads (attachments) where the API hands
+// back a full content URL rather than a path.
+func (c *restClient) getBytes(ctx context.Context, fullURL string) ([]byte, string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fullURL, nil)
+	if err != nil {
+		return nil, "", fmt.Errorf("build request: %w", err)
+	}
+	req.Header.Set("Authorization", c.authHeader)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, "", fmt.Errorf("GET %s: %w", fullURL, err)
+	}
+	defer resp.Body.Close()
+
+	raw, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, "", &APIError{StatusCode: resp.StatusCode, Status: resp.Status, Body: string(raw)}
+	}
+	return raw, resp.Header.Get("Content-Type"), nil
+}

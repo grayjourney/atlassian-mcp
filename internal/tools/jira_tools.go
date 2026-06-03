@@ -72,26 +72,100 @@ func (s *Server) jiraGetIssue(ctx context.Context, _ *mcp.CallToolRequest, in ji
 		return nil, nil, err
 	}
 	var fields []string
-	if in.Fields != "" && in.Fields != "*all" {
+	var resolver *fieldResolver
+	switch {
+	case in.Fields == "*all":
+		fields = nil // ask Jira for everything
+	case in.Fields != "":
 		fields = splitCSV(in.Fields)
+	default:
+		// Default view: rich system fields plus the instance's Story Points and
+		// Sprint custom fields, resolved by name.
+		resolver, err = s.jiraFields(ctx, jc)
+		if err != nil {
+			return nil, nil, err
+		}
+		fields = defaultGetIssueFields(resolver)
 	}
 	iss, err := jc.GetIssue(ctx, in.IssueKey, fields, in.Expand)
 	if err != nil {
 		return nil, nil, err
 	}
 	out := flattenIssue(*iss, true)
+	if resolver != nil {
+		addCustomSummaries(out, iss.Fields, resolver)
+	}
 	out["url"] = browseURL(cfg.JiraURL, iss.Key)
 	return textResult(out)
+}
+
+// defaultGetIssueFields builds the field list for a default jira_get_issue:
+// the common system fields plus Story Points and Sprint when the instance has
+// them.
+func defaultGetIssueFields(r *fieldResolver) []string {
+	fields := []string{
+		"summary", "status", "assignee", "priority", "issuetype", "updated",
+		"created", "duedate", "labels", "parent", "reporter", "components",
+		"fixVersions", "resolution", "description",
+	}
+	if f, ok := r.storyPointsField(); ok {
+		fields = append(fields, f.ID)
+	}
+	if f, ok := r.sprintField(); ok {
+		fields = append(fields, f.ID)
+	}
+	return fields
+}
+
+// addCustomSummaries surfaces Story Points and Sprint from the raw fields under
+// friendly keys.
+func addCustomSummaries(out map[string]any, raw map[string]any, r *fieldResolver) {
+	if f, ok := r.storyPointsField(); ok {
+		if v, present := raw[f.ID]; present && v != nil {
+			out["story_points"] = v
+		}
+	}
+	if f, ok := r.sprintField(); ok {
+		if names := sprintNames(raw[f.ID]); len(names) > 0 {
+			out["sprints"] = names
+		}
+	}
+}
+
+// sprintNames extracts sprint names from the Sprint field value (an array of
+// sprint objects on Cloud).
+func sprintNames(v any) []string {
+	arr, ok := v.([]any)
+	if !ok {
+		return nil
+	}
+	var out []string
+	for _, e := range arr {
+		if m, ok := e.(map[string]any); ok {
+			if n, ok := m["name"].(string); ok {
+				out = append(out, n)
+			}
+		}
+	}
+	return out
 }
 
 // --- jira_create_issue ---
 
 type jiraCreateIssueInput struct {
-	ProjectKey  string `json:"project_key" jsonschema:"project key prefix, e.g. PROJ. Ask the user if unknown"`
-	Summary     string `json:"summary" jsonschema:"issue title"`
-	IssueType   string `json:"issue_type" jsonschema:"issue type name, e.g. Task, Bug, Story, Epic"`
-	Description string `json:"description,omitempty" jsonschema:"issue description in Markdown"`
-	AssigneeID  string `json:"assignee_account_id,omitempty" jsonschema:"assignee Atlassian account ID (not email) for Cloud"`
+	ProjectKey  string   `json:"project_key" jsonschema:"project key prefix, e.g. PROJ. Ask the user if unknown"`
+	Summary     string   `json:"summary" jsonschema:"issue title"`
+	IssueType   string   `json:"issue_type" jsonschema:"issue type name, e.g. Task, Bug, Story, Epic"`
+	Description string   `json:"description,omitempty" jsonschema:"issue description in Markdown"`
+	Assignee    string   `json:"assignee,omitempty" jsonschema:"assignee email, display name, or Atlassian account id"`
+	Priority    string   `json:"priority,omitempty" jsonschema:"priority name, e.g. High"`
+	DueDate     string   `json:"due_date,omitempty" jsonschema:"due date as YYYY-MM-DD"`
+	StoryPoints *float64 `json:"story_points,omitempty" jsonschema:"story point / estimate value"`
+	Labels      []string `json:"labels,omitempty" jsonschema:"labels to set"`
+	Components  []string `json:"components,omitempty" jsonschema:"component names"`
+	FixVersions []string `json:"fix_versions,omitempty" jsonschema:"fix version names"`
+	Parent      string   `json:"parent,omitempty" jsonschema:"parent issue key (epic key for stories, or parent for subtasks)"`
+	Fields      string   `json:"fields,omitempty" jsonschema:"JSON object of any extra fields by name, e.g. {\"Severity\":\"High\"}"`
 }
 
 func (s *Server) jiraCreateIssue(ctx context.Context, _ *mcp.CallToolRequest, in jiraCreateIssueInput) (*mcp.CallToolResult, any, error) {
@@ -107,8 +181,12 @@ func (s *Server) jiraCreateIssue(ctx context.Context, _ *mcp.CallToolRequest, in
 	if in.Description != "" {
 		fields["description"] = content.MarkdownToADF(in.Description)
 	}
-	if in.AssigneeID != "" {
-		fields["assignee"] = map[string]any{"accountId": in.AssigneeID}
+	if err := s.applyIssueFields(ctx, jc, fields, issueFieldArgs{
+		DueDate: in.DueDate, StoryPoints: in.StoryPoints, Priority: in.Priority,
+		Assignee: in.Assignee, Labels: in.Labels, Components: in.Components,
+		FixVersions: in.FixVersions, Parent: in.Parent, FieldsJSON: in.Fields,
+	}); err != nil {
+		return nil, nil, err
 	}
 	created, err := jc.CreateIssue(ctx, fields)
 	if err != nil {
@@ -124,10 +202,19 @@ func (s *Server) jiraCreateIssue(ctx context.Context, _ *mcp.CallToolRequest, in
 // --- jira_update_issue ---
 
 type jiraUpdateIssueInput struct {
-	IssueKey         string `json:"issue_key" jsonschema:"the issue key, e.g. PROJ-123"`
-	Summary          string `json:"summary,omitempty" jsonschema:"new summary/title"`
-	Description      string `json:"description,omitempty" jsonschema:"new description in Markdown"`
-	AdditionalFields string `json:"additional_fields,omitempty" jsonschema:"raw JSON object of extra Jira fields to set, e.g. {\"labels\":[\"x\"]}"`
+	IssueKey         string   `json:"issue_key" jsonschema:"the issue key, e.g. PROJ-123"`
+	Summary          string   `json:"summary,omitempty" jsonschema:"new summary/title"`
+	Description      string   `json:"description,omitempty" jsonschema:"new description in Markdown"`
+	Assignee         string   `json:"assignee,omitempty" jsonschema:"assignee email, display name, or account id"`
+	Priority         string   `json:"priority,omitempty" jsonschema:"priority name, e.g. High"`
+	DueDate          string   `json:"due_date,omitempty" jsonschema:"due date as YYYY-MM-DD"`
+	StoryPoints      *float64 `json:"story_points,omitempty" jsonschema:"story point / estimate value"`
+	Labels           []string `json:"labels,omitempty" jsonschema:"labels to set (replaces existing)"`
+	Components       []string `json:"components,omitempty" jsonschema:"component names (replaces existing)"`
+	FixVersions      []string `json:"fix_versions,omitempty" jsonschema:"fix version names (replaces existing)"`
+	Parent           string   `json:"parent,omitempty" jsonschema:"parent/epic issue key"`
+	Fields           string   `json:"fields,omitempty" jsonschema:"JSON object of extra fields by name, e.g. {\"Severity\":\"High\"}"`
+	AdditionalFields string   `json:"additional_fields,omitempty" jsonschema:"advanced: raw JSON object keyed by field id, e.g. {\"customfield_10010\":1}"`
 }
 
 func (s *Server) jiraUpdateIssue(ctx context.Context, _ *mcp.CallToolRequest, in jiraUpdateIssueInput) (*mcp.CallToolResult, any, error) {
@@ -142,6 +229,13 @@ func (s *Server) jiraUpdateIssue(ctx context.Context, _ *mcp.CallToolRequest, in
 	if in.Description != "" {
 		fields["description"] = content.MarkdownToADF(in.Description)
 	}
+	if err := s.applyIssueFields(ctx, jc, fields, issueFieldArgs{
+		DueDate: in.DueDate, StoryPoints: in.StoryPoints, Priority: in.Priority,
+		Assignee: in.Assignee, Labels: in.Labels, Components: in.Components,
+		FixVersions: in.FixVersions, Parent: in.Parent, FieldsJSON: in.Fields,
+	}); err != nil {
+		return nil, nil, err
+	}
 	if in.AdditionalFields != "" {
 		extra := map[string]any{}
 		if err := json.Unmarshal([]byte(in.AdditionalFields), &extra); err != nil {
@@ -150,7 +244,7 @@ func (s *Server) jiraUpdateIssue(ctx context.Context, _ *mcp.CallToolRequest, in
 		maps.Copy(fields, extra)
 	}
 	if len(fields) == 0 {
-		return nil, nil, fmt.Errorf("nothing to update: provide summary, description or additional_fields")
+		return nil, nil, fmt.Errorf("nothing to update: provide a field to change")
 	}
 	if err := jc.UpdateIssue(ctx, in.IssueKey, fields); err != nil {
 		return nil, nil, err
